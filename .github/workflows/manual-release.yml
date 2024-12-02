@@ -1,0 +1,105 @@
+name: Manual Build and Release Caddy with Security Plugin
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_name:
+        description: "Specify the release name e.g: 'v2.8.0' or latest"
+        required: true
+        default: "v2.8.4"
+      go_version:
+        description: "Specify the Go version to use (e.g., 1.23.3)"
+        required: true
+        default: "1.23.3"
+      caddy_version:
+        description: "Specify Caddy version to use (e.g., 2.8.0)"
+        required: true
+        default: "2.8.4"
+      xcaddy_version:
+        description: "Specify xcaddy version to use (e.g., 0.4.4)"
+        required: true
+        default: "0.4.4"
+      caddy_security_version:
+        description: "Specify caddy-security plugin version to use (e.g., 1.1.29)"
+        required: true
+        default: "1.1.29"
+      skip_go_installer:
+        description: "Skip Go installer (yes or no)"
+        required: false
+        default: "no"
+      skip_xcaddy_installer:
+        description: "Skip xcaddy installer (yes or no)"
+        required: false
+        default: "no"
+      output_suffix:
+        description: "Suffix for the output binary file"
+        required: false
+        default: ""
+      release_notes:
+        description: "Release notes for this build"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  manual-build-and-release:
+    name: Manual Build and Release
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        arch: [amd64, arm64] # Build for both amd64 and arm64
+
+    steps:
+      # Checkout the repository
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      # Set up architecture-specific environment
+      - name: Set Architecture
+        run: echo "ARCH=${{ matrix.arch }}" >> $GITHUB_ENV
+
+      # Install dependencies and build Caddy with the security plugin
+      - name: Run Build Script
+        run: |
+          chmod +x ./build.sh
+          export SKIP_GO_INSTALLER="${{ github.event.inputs.skip_go_installer }}"
+          export SKIP_XCADDY_INSTALLER="${{ github.event.inputs.skip_xcaddy_installer }}"
+          export GO_VERSION="${{ github.event.inputs.go_version }}"
+          export CADDY_VERSION="${{ github.event.inputs.caddy_version }}"
+          export XCADDY_VERSION="${{ github.event.inputs.xcaddy_version }}"
+          export SECURITY_VERSION="${{ github.event.inputs.caddy_security_version }}"
+          export CADDY_OUTPUT="./out/caddy-${{ github.event.inputs.caddy_version }}-linux-${{ matrix.arch }}${{ github.event.inputs.output_suffix }}"
+          export GOARCH=${{ matrix.arch }}
+          ./build.sh
+
+      # Generate the checksum file for the binary
+      - name: Generate Checksum
+        run: |
+          caddy_binary="./out/caddy-${{ github.event.inputs.caddy_version }}-linux-${{ matrix.arch }}${{ github.event.inputs.output_suffix }}"
+          sha256sum "$caddy_binary" > "${caddy_binary}-checksum.sha256.txt"
+          echo "Checksum file created: ${caddy_binary}-checksum.sha256.txt"
+
+      - name: Generate Release notes
+        run: |
+          RELEASE_NOTES="${{ github.event.inputs.release_notes }}"
+          [ -z "$RELEASE_NOTES" ] && {
+            RELEASE_NOTES="Caddy compiled with caddy-security plugin enabled.
+
+            - Caddy v${{ github.event.inputs.caddy_version }}
+            - caddy-security v${{ github.event.inputs.caddy_security_version }}
+
+            Finished at $( date )"
+          }
+
+          echo -e "$RELEASE_NOTES" > out/gh_actions_release.txt
+
+      - name: Create Release
+        uses: ncipollo/release-action@v1
+        with:
+          artifacts: "out/caddy-*"
+          allowUpdates: true
+          tag: "v${{ github.event.inputs.caddy_version }}"
+          name: "${{ github.event.inputs.release_name }}"
+          bodyFile: out/gh_actions_release.txt
