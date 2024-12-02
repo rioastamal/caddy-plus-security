@@ -1,0 +1,50 @@
+name: Build and Release Caddy with Security Plugin
+
+on:
+  push:
+    tags:
+      - 'v*' # Trigger the workflow for any tag starting with "v"
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    name: Build and Release
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        arch: [amd64, arm64] # Build for both amd64 and arm64
+
+    steps:
+      # Checkout the repository
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      # Set up architecture-specific environment
+      - name: Set Architecture
+        run: echo "ARCH=${{ matrix.arch }}" >> $GITHUB_ENV
+
+      # Install dependencies and build Caddy with the security plugin
+      - name: Run Build Script
+        run: |
+          chmod +x ./build.sh
+          export SKIP_GO_INSTALLER="no"
+          export SKIP_XCADDY_INSTALLER="no"
+          export GO_VERSION=1.23.3
+          export CADDY_OUTPUT="./out/caddy-${{ github.ref_name }}-linux-${{ matrix.arch }}"
+          export GOARCH=${{ matrix.arch }}
+          ./build.sh
+
+      # Generate the checksum file for the binary
+      - name: Generate Checksum
+        run: |
+          caddy_binary="./out/caddy-${{ github.ref_name }}-linux-${{ matrix.arch }}"
+          sha256sum "$caddy_binary" > "${caddy_binary}-checksum.sha256.txt"
+          echo "Checksum file created: ${caddy_binary}-checksum.sha256.txt"
+
+      - name: Create Release
+        uses: ncipollo/release-action@v1
+        with:
+          artifacts: "out/caddy-*"
+          allowUpdates: true
